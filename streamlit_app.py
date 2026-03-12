@@ -14,6 +14,9 @@ from email.mime.application import MIMEApplication
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from docx.document import Document as _Document
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.compose']
 
@@ -78,54 +81,65 @@ def get_gmail_service(sender_email):
 
 # ---------------- Word → HTML Conversion ----------------
 
+def iter_block_items(parent):
+    """Yield paragraphs and tables in document order"""
+    if isinstance(parent, _Document):
+        parent_elm = parent.element.body
+    else:
+        parent_elm = parent._element
+
+    for child in parent_elm.iterchildren():
+        if child.tag.endswith('p'):
+            yield Paragraph(child, parent)
+        elif child.tag.endswith('tbl'):
+            yield Table(child, parent)
+
+
 def extract_subject_and_body(docx_path):
 
     doc = Document(docx_path)
+
     subject = ""
     html_parts = []
 
-    # ---- Extract subject ----
-    for p in doc.paragraphs:
-        if p.text.strip().lower().startswith("subject"):
-            subject = p.text.replace("Subject:", "").strip()
-            break
+    for block in iter_block_items(doc):
 
-    # ---- Convert paragraphs with proper line breaks ----
-    for p in doc.paragraphs:
+        # -------- Paragraph --------
+        if isinstance(block, Paragraph):
 
-        text = p.text.strip()
+            text = block.text.strip()
 
-        if not text:
+            if text.lower().startswith("subject"):
+                subject = text.replace("Subject:", "").strip()
+
+            if not text:
+                html_parts.append("<br>")
+                continue
+
+            text = text.replace("\n", "<br>")
+
+            html_parts.append(
+                f"<p style='margin:0 0 10px 0; line-height:1.7; font-size:15px;'>{text}</p>"
+            )
+
+        # -------- Table --------
+        elif isinstance(block, Table):
+
             html_parts.append("<br>")
-            continue
+            html_parts.append(
+                "<table border='1' cellpadding='6' cellspacing='0' "
+                "style='border-collapse: collapse; width:100%;'>"
+            )
 
-        # Convert internal Word line breaks to HTML
-        text = text.replace("\n", "<br>")
+            for row in block.rows:
+                html_parts.append("<tr>")
+                for cell in row.cells:
+                    cell_text = cell.text.replace("\n", "<br>")
+                    html_parts.append(f"<td>{cell_text}</td>")
+                html_parts.append("</tr>")
 
-        html_parts.append(
-            f"<p style='margin:0 0 10px 0; line-height:1.6;'>{text}</p>"
-        )
-
-    # ---- Convert tables ----
-    for table in doc.tables:
-
-        html_parts.append("<br>")
-        html_parts.append(
-            "<table border='1' cellpadding='6' cellspacing='0' "
-            "style='border-collapse: collapse; width:100%;'>"
-        )
-
-        for row in table.rows:
-            html_parts.append("<tr>")
-            for cell in row.cells:
-                cell_text = cell.text.replace("\n", "<br>")
-                html_parts.append(
-                    f"<td style='text-align:left;'>{cell_text}</td>"
-                )
-            html_parts.append("</tr>")
-
-        html_parts.append("</table>")
-        html_parts.append("<br>")
+            html_parts.append("</table>")
+            html_parts.append("<br>")
 
     return subject, "".join(html_parts)
 
