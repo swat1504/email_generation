@@ -103,7 +103,7 @@ def extract_subject_and_body(docx_path):
         text = text.replace("\n", "<br>")
 
         html_parts.append(
-            f"<p style='margin:0 0 10px 0; line-height:1.7; font-size:15px;'>{text}</p>"
+            f"<p style='margin:0 0 10px 0; line-height:1.6;'>{text}</p>"
         )
 
     # ---- Convert tables ----
