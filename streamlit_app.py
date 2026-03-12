@@ -37,43 +37,27 @@ def normalize_branch_name(name: str) -> str:
 
 import json
 
+import json
+from google.oauth2.credentials import Credentials
+
 def get_gmail_service(sender_email):
-    os.makedirs("tokens", exist_ok=True)
-    token_file = f"tokens/{sender_email.replace('@', '_at_')}.json"
-    creds = None
 
-    if os.path.exists(token_file):
-        try:
-            creds = Credentials.from_authorized_user_file(token_file, SCOPES)
-        except:
-            os.remove(token_file)
-            creds = None
+    if sender_email == "ambikanathp@gmail.com":
+        token_json = st.secrets["token_ambikanath"]
 
-    if not creds or not creds.valid:
+    elif sender_email == "janakinathp@gmail.com":
+        token_json = st.secrets["token_janakinath"]
 
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-            except:
-                os.remove(token_file)
-                creds = None
+    elif sender_email == "swatiparida1504@gmail.com":
+        token_json = st.secrets["token_swati"]
 
-        if not creds:
-            creds_dict = json.loads(st.secrets["google_credentials"])
+    else:
+        raise Exception("Unknown sender email")
 
-            flow = InstalledAppFlow.from_client_config(
-                creds_dict,
-                SCOPES
-            )
-
-            creds = flow.run_local_server(
-                host="0.0.0.0",
-                port=8501,
-                open_browser=False
-            )
-
-        with open(token_file, "w") as token:
-            token.write(creds.to_json())
+    creds = Credentials.from_authorized_user_info(
+        json.loads(token_json),
+        SCOPES
+    )
 
     return build("gmail", "v1", credentials=creds)
 
