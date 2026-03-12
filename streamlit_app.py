@@ -13,32 +13,46 @@ from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from google.auth.transport.requests import Request
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.compose']
 
-EMAIL_SIGNATURE_HTML = """
-<br><br>
-<p>With Warm Regards,</p>
-<p style="font-size:20px; font-weight:bold; color:#5aa05a;">
-    Ambickanat Parida
-</p>
-<p style="font-size:18px; font-weight:bold; color:#2f3df4;">
-    Gayattree Docutechs Private Limited
-</p>
-"""
 
 # ---------------- Utilities ----------------
 
 def normalize_branch_name(name: str) -> str:
     return re.sub(r'[^A-Za-z0-9]', '', name).upper()
 
-import json
 
-import json
-from google.oauth2.credentials import Credentials
+# ---------------- Dynamic Signature ----------------
+
+def get_signature_html(sender_email):
+
+    if sender_email == "ambikanathp@gmail.com":
+        name = "Ambikanath Parida"
+
+    elif sender_email == "janakinathp@gmail.com":
+        name = "Janakinath Parida"
+
+    elif sender_email == "swatiparida1504@gmail.com":
+        name = "Swati Parida"
+
+    else:
+        name = ""
+
+    return f"""
+    <br><br>
+    <p>With Warm Regards,</p>
+    <p style="font-size:20px; font-weight:bold; color:#5aa05a;">
+        {name}
+    </p>
+    <p style="font-size:18px; font-weight:bold; color:#2f3df4;">
+        Gayattree Docutechs Private Limited
+    </p>
+    """
+
+
+# ---------------- Gmail Service ----------------
 
 def get_gmail_service(sender_email):
 
@@ -61,23 +75,60 @@ def get_gmail_service(sender_email):
 
     return build("gmail", "v1", credentials=creds)
 
+
+# ---------------- Word → HTML Conversion ----------------
+
 def extract_subject_and_body(docx_path):
+
     doc = Document(docx_path)
     subject = ""
+    html_parts = []
 
+    # Extract subject
     for p in doc.paragraphs:
         if p.text.strip().lower().startswith("subject"):
             subject = p.text.replace("Subject:", "").strip()
             break
 
-    html_parts = []
+    # Convert paragraphs (preserve spacing)
     for p in doc.paragraphs:
-        html_parts.append(f"<p>{p.text}</p>")
+
+        text = p.text.strip()
+
+        if not text:
+            html_parts.append("<br>")
+        else:
+            html_parts.append(
+                f"<p style='margin:0 0 10px 0; line-height:1.6;'>{text}</p>"
+            )
+
+    # Convert tables
+    for table in doc.tables:
+
+        html_parts.append("<br>")
+        html_parts.append(
+            "<table border='1' cellpadding='6' cellspacing='0' "
+            "style='border-collapse: collapse; width:100%;'>"
+        )
+
+        for row in table.rows:
+            html_parts.append("<tr>")
+            for cell in row.cells:
+                html_parts.append(
+                    f"<td style='text-align:left;'>{cell.text.strip()}</td>"
+                )
+            html_parts.append("</tr>")
+
+        html_parts.append("</table>")
+        html_parts.append("<br>")
 
     return subject, "".join(html_parts)
 
 
+# ---------------- Create Draft ----------------
+
 def create_draft_email(service, sender, to, cc, bcc, subject, body_html, attachments):
+
     message = MIMEMultipart("alternative")
     message["to"] = to
     message["from"] = sender
@@ -92,7 +143,10 @@ def create_draft_email(service, sender, to, cc, bcc, subject, body_html, attachm
 
     for file_path in attachments:
         with open(file_path, "rb") as f:
-            part = MIMEApplication(f.read(), Name=os.path.basename(file_path))
+            part = MIMEApplication(
+                f.read(),
+                Name=os.path.basename(file_path)
+            )
         part['Content-Disposition'] = f'attachment; filename="{os.path.basename(file_path)}"'
         message.attach(part)
 
@@ -104,33 +158,70 @@ def create_draft_email(service, sender, to, cc, bcc, subject, body_html, attachm
     ).execute()
 
 
-# ---------------- Core Logic ----------------
+# ---------------- Core Processing ----------------
 
 def process_emails(folder_path, sender_email, cc_email, bcc_email):
+
     logs = []
     service = get_gmail_service(sender_email)
 
-    # -------- Find Excel Recursively --------
+    # ---- Find Excel ----
     excel_files = []
+
     for root, dirs, files in os.walk(folder_path):
         for file in files:
             if file.lower().endswith((".xls", ".xlsx")):
                 excel_files.append(os.path.join(root, file))
 
     if not excel_files:
-        return [f"❌ No Excel file found inside uploaded ZIP."]
+        return ["❌ No Excel file found inside uploaded ZIP."]
 
     excel_path = excel_files[0]
     logs.append(f"📄 Excel Found: {os.path.basename(excel_path)}")
 
-    df = pd.read_excel(excel_path)
+    # ---- Detect Correct Sheet ----
+    xls = pd.ExcelFile(excel_path)
 
-    if "Branch Name" not in df.columns or "Email" not in df.columns:
-        return ["❌ Excel must contain 'Branch Name' and 'Email' columns."]
+    selected_df = None
+
+    for sheet in xls.sheet_names:
+
+        temp_df = pd.read_excel(xls, sheet_name=sheet)
+
+        cols = [c.strip().upper() for c in temp_df.columns]
+
+        # Normalize column names
+        branch_col = None
+        email_col = None
+
+        for c in cols:
+            if "BRANCH" in c:
+                branch_col = c
+            if "EMAIL" in c:
+                email_col = c
+
+        if branch_col and email_col:
+            selected_df = temp_df
+            break
+
+
+    if selected_df is None:
+        return ["❌ No sheet found containing BRANCH and EMAIL columns"]
+
+
+    # Standardize column names internally
+    selected_df.columns = [c.strip().upper() for c in selected_df.columns]
+
+    branch_column = [c for c in selected_df.columns if "BRANCH" in c][0]
+    email_column = [c for c in selected_df.columns if "EMAIL" in c][0]
+
+    df = selected_df[[branch_column, email_column]].copy()
+
+    df.columns = ["Branch Name", "Email"]
 
     df["Branch Key"] = df["Branch Name"].astype(str).apply(normalize_branch_name)
 
-    # -------- Detect Required Folders --------
+    # ---- Detect Required Folders ----
     letters_path = None
     invoices_path = None
 
@@ -146,8 +237,9 @@ def process_emails(folder_path, sender_email, cc_email, bcc_email):
     if not invoices_path:
         return ["❌ BRANCHWISE INVOICES folder not found."]
 
-    # -------- Process Each Letter --------
+    # ---- Process Each Letter ----
     for file in os.listdir(letters_path):
+
         if not file.endswith("_letter.docx"):
             continue
 
@@ -155,6 +247,7 @@ def process_emails(folder_path, sender_email, cc_email, bcc_email):
         branch_key = normalize_branch_name(branch_raw)
 
         row = df[df["Branch Key"] == branch_key]
+
         if row.empty:
             logs.append(f"⚠️ No email for {branch_raw}")
             continue
@@ -162,6 +255,7 @@ def process_emails(folder_path, sender_email, cc_email, bcc_email):
         recipient_email = row["Email"].values[0]
 
         invoice_folder = None
+
         for folder in os.listdir(invoices_path):
             if normalize_branch_name(folder) == branch_key:
                 invoice_folder = os.path.join(invoices_path, folder)
@@ -181,7 +275,7 @@ def process_emails(folder_path, sender_email, cc_email, bcc_email):
             os.path.join(letters_path, file)
         )
 
-        body_html += EMAIL_SIGNATURE_HTML
+        body_html += get_signature_html(sender_email)
 
         create_draft_email(
             service,
@@ -202,11 +296,11 @@ def process_emails(folder_path, sender_email, cc_email, bcc_email):
 # ---------------- Streamlit UI ----------------
 
 st.set_page_config(page_title="Bulk Gmail Draft Generator", layout="centered")
+
 st.title("📧 Bulk Gmail Draft Generator")
 
-st.markdown("### 📁 Upload ZIP Folder")
 uploaded_zip = st.file_uploader(
-    "Upload your main folder as ZIP",
+    "📁 Upload your main folder as ZIP",
     type=["zip"]
 )
 
@@ -224,15 +318,22 @@ sender_email = st.selectbox(
 cc_email = st.text_input("📧 CC (optional)")
 bcc_email = st.text_input("📧 BCC (optional)")
 
-col1, col2, col3 = st.columns([1,2,1])
+col1, col2, col3 = st.columns([1, 2, 1])
+
 with col2:
-    generate_button = st.button("🚀 Generate Draft Emails", use_container_width=True)
+    generate_button = st.button(
+        "🚀 Generate Draft Emails",
+        use_container_width=True
+    )
 
 if generate_button:
+
     if not uploaded_zip:
         st.error("Please upload ZIP file.")
     else:
+
         with tempfile.TemporaryDirectory() as temp_dir:
+
             zip_path = os.path.join(temp_dir, "uploaded.zip")
 
             with open(zip_path, "wb") as f:
@@ -241,12 +342,11 @@ if generate_button:
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(temp_dir)
 
-            # Remove macOS metadata folders
+            # Remove macOS metadata
             for item in os.listdir(temp_dir):
                 if item.startswith("__MACOSX"):
                     shutil.rmtree(os.path.join(temp_dir, item))
 
-            # Detect correct root folder
             items = [i for i in os.listdir(temp_dir) if i != "uploaded.zip"]
 
             if len(items) == 1 and os.path.isdir(os.path.join(temp_dir, items[0])):
