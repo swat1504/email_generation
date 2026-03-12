@@ -84,25 +84,29 @@ def extract_subject_and_body(docx_path):
     subject = ""
     html_parts = []
 
-    # Extract subject
+    # ---- Extract subject ----
     for p in doc.paragraphs:
         if p.text.strip().lower().startswith("subject"):
             subject = p.text.replace("Subject:", "").strip()
             break
 
-    # Convert paragraphs (preserve spacing)
+    # ---- Convert paragraphs with proper line breaks ----
     for p in doc.paragraphs:
 
         text = p.text.strip()
 
         if not text:
             html_parts.append("<br>")
-        else:
-            html_parts.append(
-                f"<p style='margin:0 0 10px 0; line-height:1.6;'>{text}</p>"
-            )
+            continue
 
-    # Convert tables
+        # Convert internal Word line breaks to HTML
+        text = text.replace("\n", "<br>")
+
+        html_parts.append(
+            f"<p style='margin:0 0 10px 0; line-height:1.7; font-size:15px;'>{text}</p>"
+        )
+
+    # ---- Convert tables ----
     for table in doc.tables:
 
         html_parts.append("<br>")
@@ -114,8 +118,9 @@ def extract_subject_and_body(docx_path):
         for row in table.rows:
             html_parts.append("<tr>")
             for cell in row.cells:
+                cell_text = cell.text.replace("\n", "<br>")
                 html_parts.append(
-                    f"<td style='text-align:left;'>{cell.text.strip()}</td>"
+                    f"<td style='text-align:left;'>{cell_text}</td>"
                 )
             html_parts.append("</tr>")
 
